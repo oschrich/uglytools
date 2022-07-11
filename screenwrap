@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# STTY string to make terminal behave better
+# FIXME: Not sure what this really is/does
+STTY=500:5:bf:8a3b:3:1c:8:15:4:0:1:0:11:13:1a:0:12:f:17:16:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0
+
+SCRDIR=$HOME/.screen
+
+# Script will attept to keep track of all machines that have running sessions
+# It's not the smartest, but this could be overridden/reworked for other behavior
+MACHINES=${SCRDIR}/screenmachines
+
+if ! grep -q $HOSTNAME $MACHINES; then
+#  echo "Adding $HOSTNAME to $MACHINES" 
+  echo $HOSTNAME >> $MACHINES
+fi
+
+HOSTS=`cat $MACHINES`
+
+# Query all known hosts, save output
+for HOST in ${HOSTS}; do
+  ssh ${HOST} "screen -ls" > ${SCRDIR}/${HOST}.out
+  
+  cat ${SCRDIR}/${HOST}.out | egrep 'Attached|Detached' | sed -e 's/^.*\.//' >> ${SCRDIR}/formatted.out
+done
+
+# If no args, just display output for each host and remove unused hosts
+if [[ $# -eq 0 ]] ; then
+  for HOST in ${HOSTS}; do
+    if grep -q "No Sockets found" ${SCRDIR}/${HOST}.out; then
+      echo "No screens on ${HOST} - Removing"
+      sed -i "/${HOST}/d" ${MACHINES}
+    else
+      #echo "${HOST}:"
+      cat ${SCRDIR}/${HOST}.out | egrep 'Attached|Detached' | sed -e "s/^/${HOST}/"
+    fi
+  done
+
+  echo -e "\n\n### Sessions ###\n"
+  cat ${SCRDIR}/formatted.out | sed -e 's/\t/ /' | sort | awk '{print $2 " " $1}'
+  rm ${SCRDIR}/*.out
+  exit 0
+fi
+
+# If we made it here, we're looking for a specific string
+# If we find it, set FOUNDHOST
+for HOST in ${HOSTS}; do
+  if grep -q "${1}[[:space:]\t]" ${SCRDIR}/${HOST}.out; then
+    echo "Found ${1} on ${HOST}"
+    FOUNDHOST="${HOST}"
+  fi
+done
+
+rm ${SCRDIR}/*.out
+
+# If FOUNDHOST is set, use that, otherwise use HOSTNAME and start a new session
+if [ -z "${FOUNDHOST}" ]; then
+  HOST=${HOSTNAME}
+else
+  HOST=${FOUNDHOST}
+fi
+
+echo "Using host ${HOST}"
+
+if ! ssh -t ${HOST} "screen -x $1" ; then
+  ssh ${HOST} "screen -dmS $1 /bin/bash"
+  ssh -t ${HOST} "screen -x $1 -p 0 -X stuff \"stty ${STTY} \n\" "
+  ssh -t ${HOST} "screen -x $1 -p 0 -X stuff \"name ${1} \n\" "
+  ssh -t ${HOST} "screen -x $1"
+fi
